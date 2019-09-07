@@ -1,19 +1,23 @@
 extern crate argparse;
 extern crate serde_json;
+extern crate yaml_rust;
 
-use std::io::{self, stdin, BufReader};
+use argparse::{ArgumentParser, StoreConst, StoreOption};
+use filetypes::{read_objects, FileType, ParseError};
+use serde_json::Value;
 use std::fs::File;
-use argparse::{ArgumentParser, StoreOption};
-use serde_json::{Value};
+use std::io::{stdin, BufReader};
 
-fn main() -> io::Result<()> {
-    let (key, file) = get_args();
-    let json_in = match file {
-        Some(f) => serde_json::from_reader(BufReader::new(File::open(f)?))?,
-        None => serde_json::from_reader(BufReader::new(stdin()))?,
+mod filetypes;
+
+fn main() -> Result<(), ParseError> {
+    let args = get_args();
+    let json_in = match args.file {
+        Some(f) => read_objects(BufReader::new(File::open(f)?), args.ext)?,
+        None => read_objects(BufReader::new(stdin()), args.ext)?,
     };
 
-    let content = match key {
+    let content = match args.key {
         Some(key) => extract(key, json_in),
         None => Some(json_in),
     };
@@ -25,19 +29,67 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn get_args() -> (Option<String>, Option<String>) {
-    let mut key = None;
-    let mut file = None;
+struct Args {
+    key: Option<String>,
+    file: Option<String>,
+    ext: FileType,
+}
+
+impl Args {
+    fn new() -> Args {
+        Args {
+            key: None,
+            file: None,
+            ext: FileType::Json,
+        }
+    }
+}
+
+fn get_args() -> Args {
+    let mut args = Args::new();
+    let mut ext: Option<FileType> = None;
     {
         let mut parser = ArgumentParser::new();
-        parser.refer(&mut key)
+        parser
+            .refer(&mut args.key)
             .add_option(&["-k", "--key"], StoreOption, "Key to search for");
-        parser.refer(&mut file)
-            .add_option(&["-f", "--file"], StoreOption, "File to read from");
+
+        parser.refer(&mut args.file).add_option(
+            &["-f", "--file"],
+            StoreOption,
+            "File to read from (default stdin)",
+        );
+
+        parser
+            .refer(&mut ext)
+            .add_option(
+                &["--yaml"],
+                StoreConst(Some(FileType::Yaml)),
+                "Parse input as yaml",
+            )
+            .add_option(
+                &["--json"],
+                StoreConst(Some(FileType::Json)),
+                "Parse input as json",
+            );
+
         parser.parse_args_or_exit();
     }
 
-    (key, file)
+    let filename: Option<&String> = Option::from(&args.file);
+    args.ext = ext
+        .or_else(|| {
+            filename
+                .map(|x| get_extension(&x))
+                .map(FileType::for_extension)?
+        })
+        .unwrap_or(FileType::Json);
+
+    args
+}
+
+fn get_extension(filename: &str) -> &str {
+    filename.rsplitn(2, '.').next().unwrap()
 }
 
 fn extract(key: String, json_in: Value) -> Option<Value> {
@@ -67,7 +119,6 @@ fn extract(key: String, json_in: Value) -> Option<Value> {
 }
 
 fn output(value: &Value, prefix: &mut Vec<String>) {
-    // println!("Content: {}, Prefix: {}", value, prefix.join("."));
     if value.is_array() {
         let array = value.as_array().unwrap();
         for (i, v) in array.into_iter().enumerate() {
