@@ -1,36 +1,53 @@
 extern crate argparse;
+extern crate json_pointer;
 extern crate serde_json;
 extern crate yaml_rust;
 
-use argparse::{ArgumentParser, StoreConst, StoreOption};
-use filetypes::{read_objects, FileType, ParseError};
+use argparse::{ArgumentParser, Store, StoreConst, StoreOption};
+use filetypes::{read_objects, FileType, ReadError};
+use json_pointer::JsonPointer;
 use serde_json::Value;
 use std::fs::File;
-use std::io::{stdin, BufReader};
+use std::io::{self, stdin, BufReader};
 
 mod filetypes;
 
-fn main() -> Result<(), ParseError> {
+#[derive(Debug)]
+enum RunError {
+    IoError(io::Error),
+    ObjectError(ReadError),
+}
+
+impl From<io::Error> for RunError {
+    fn from(e: io::Error) -> RunError {
+        RunError::IoError(e)
+    }
+}
+
+impl From<ReadError> for RunError {
+    fn from(e: ReadError) -> RunError {
+        match e {
+            ReadError::IoError(ioe) => RunError::IoError(ioe),
+            _ => RunError::ObjectError(e),
+        }
+    }
+}
+
+fn main() -> Result<(), RunError> {
     let args = get_args();
     let json_in = match args.file {
         Some(f) => read_objects(BufReader::new(File::open(f)?), args.ext)?,
         None => read_objects(BufReader::new(stdin()), args.ext)?,
     };
 
-    let content = match args.key {
-        Some(key) => extract(key, json_in),
-        None => Some(json_in),
-    };
-    match content {
-        Some(content) => output(&content, &mut Vec::new()),
-        None => (),
-    };
+    let content = extract(&args.key, &json_in);
+    content.map(|c| output(c, &mut Vec::new()));
 
     Ok(())
 }
 
 struct Args {
-    key: Option<String>,
+    key: String,
     file: Option<String>,
     ext: FileType,
 }
@@ -38,7 +55,7 @@ struct Args {
 impl Args {
     fn new() -> Args {
         Args {
-            key: None,
+            key: String::from(""),
             file: None,
             ext: FileType::Json,
         }
@@ -52,7 +69,7 @@ fn get_args() -> Args {
         let mut parser = ArgumentParser::new();
         parser
             .refer(&mut args.key)
-            .add_option(&["-k", "--key"], StoreOption, "Key to search for");
+            .add_option(&["-k", "--key"], Store, "Key to search for");
 
         parser.refer(&mut args.file).add_option(
             &["-f", "--file"],
@@ -92,30 +109,8 @@ fn get_extension(filename: &str) -> &str {
     filename.rsplitn(2, '.').next().unwrap()
 }
 
-fn extract(key: String, json_in: Value) -> Option<Value> {
-    /*
-    let pointer = JsonPointer::new(key.split('.').collect());
-    return match pointer.get_owned(json_in) {
-        Ok(result) => Some(result),
-        _ => None,
-    };
-    */
-    let mut current = json_in;
-    for piece in key.split('.') {
-        let next;
-        if current.is_array() {
-            let idx = match piece.parse::<usize>() {
-                Ok(val) => val,
-                _ => return None,
-            };
-            next = current.get_mut(idx)?;
-        } else {
-            next = current.get_mut(piece)?;
-        }
-        current = next.take();
-    }
-
-    Some(current)
+fn extract<'a>(pointer: &String, json_in: &'a Value) -> Option<&'a Value> {
+    Some(json_in.pointer(pointer)?)
 }
 
 fn output(value: &Value, prefix: &mut Vec<String>) {
@@ -134,7 +129,7 @@ fn output(value: &Value, prefix: &mut Vec<String>) {
             prefix.pop();
         }
     } else {
-        let mut name = prefix.join(".");
+        let mut name = JsonPointer::new(prefix).to_string();
         if !name.is_empty() {
             name.push(':');
         }

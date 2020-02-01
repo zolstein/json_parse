@@ -4,37 +4,37 @@ use std::io::{self, Read};
 use std::result;
 use yaml_rust::{scanner, yaml, Yaml, YamlLoader};
 
-type Result<T> = result::Result<T, ParseError>;
+type Result<T> = result::Result<T, ReadError>;
 
 #[derive(Debug)]
-pub enum ParseError {
+pub enum ReadError {
     IoError(io::Error),
     ScanError(scanner::ScanError),
     JsonError(serde_json::Error),
     JsonConvertError(String),
 }
 
-impl ParseError {
-    fn conversion_error(msg: String) -> ParseError {
-        ParseError::JsonConvertError(msg)
+impl ReadError {
+    fn conversion_error(msg: String) -> ReadError {
+        ReadError::JsonConvertError(msg)
     }
 }
 
-impl From<io::Error> for ParseError {
-    fn from(err: io::Error) -> ParseError {
-        ParseError::IoError(err)
+impl From<io::Error> for ReadError {
+    fn from(err: io::Error) -> ReadError {
+        ReadError::IoError(err)
     }
 }
 
-impl From<scanner::ScanError> for ParseError {
-    fn from(err: scanner::ScanError) -> ParseError {
-        ParseError::ScanError(err)
+impl From<scanner::ScanError> for ReadError {
+    fn from(err: scanner::ScanError) -> ReadError {
+        ReadError::ScanError(err)
     }
 }
 
-impl From<serde_json::Error> for ParseError {
-    fn from(err: serde_json::Error) -> ParseError {
-        ParseError::JsonError(err)
+impl From<serde_json::Error> for ReadError {
+    fn from(err: serde_json::Error) -> ReadError {
+        ReadError::JsonError(err)
     }
 }
 
@@ -82,7 +82,7 @@ fn yaml_to_json(yaml: Yaml) -> Result<Value> {
         Yaml::Real(r) => Ok(r.into()), // Sort of a hack, since we will print as string
         Yaml::Boolean(b) => Ok(b.into()),
         Yaml::Null => Ok(Value::Null),
-        _ => Err(ParseError::conversion_error(
+        _ => Err(ReadError::conversion_error(
             "Unsupported value type".to_string(),
         )),
     }
@@ -115,7 +115,7 @@ fn yaml_to_key_string(yaml: Yaml) -> Result<String> {
         Yaml::Integer(i) => Ok(i.to_string()),
         Yaml::Real(s) => Ok(s),
         Yaml::Boolean(b) => Ok(b.to_string()),
-        _ => Err(ParseError::conversion_error(
+        _ => Err(ReadError::conversion_error(
             "Non-stringable key".to_string(),
         )),
     }
